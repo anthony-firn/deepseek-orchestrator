@@ -1,0 +1,44 @@
+# ────────────────────────────────────────────────
+#  DeepSeek Orchestrator · Deployment Config
+#  save as configs/deployment_config.yaml
+# ────────────────────────────────────────────────
+
+service:
+  host: 0.0.0.0          # Bind address for vLLM API
+  port: 8000             # External port for OpenAI‑style endpoint
+  backend: gpu           # gpu | cpu
+  use_ssl: false         # true if you terminate TLS at instance
+  log_level: info        # debug | info | warning | error
+  # If you place an ALB / Nginx in front, set host to 127.0.0.1
+
+model:
+  path: <<< auto >>>     # Overridden by deploy_model.sh (latest ckpt)
+  tokenizer_path: null   # Optional custom tokenizer directory
+  tensor_parallel_size: auto  # "auto" = GPU count; or set integer
+  max_batch_tokens: 4096 # Overall token budget per batch (affects latency)
+  trust_remote_code: true
+
+runtime:
+  environment: deepseek    # Conda env name created in setup_env.sh
+  download_dir: ~/hf_models
+  # Extra vLLM CLI flags (list) – each entry becomes `--<flag>`
+  extra_flags: []          # e.g. ["enforce-eager", "max-model-len=8192"]
+
+autoscaling:
+  enabled: true
+  min_concurrency: 0
+  max_concurrency: 10
+  scale_up_threshold: 70     # % GPU Util to add replica
+  scale_down_threshold: 15   # % GPU Util to remove replica
+  cooldown_seconds: 120
+
+health_checks:
+  path: /livez
+  interval_seconds: 30
+  timeout_seconds: 2
+  unhealthy_threshold: 3
+
+tags:
+  project: deepseek-orchestrator
+  owner:  <<< edit: your‑team >>>
+  cost_center: R&D
