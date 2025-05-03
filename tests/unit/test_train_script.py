@@ -6,6 +6,7 @@ We can’t run the full training loop in CI, but we can check that:
   • train.py CLI flags are built without error
 """
 import subprocess
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]        # project root
