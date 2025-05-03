@@ -1,0 +1,4 @@
+# requirements.txt
+pytest>=7.0
+requests>=2.0
+awscli   # if you invoke AWS CLI in tests
