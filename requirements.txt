@@ -1,4 +1,11 @@
-# requirements.txt
-pytest>=7.0
-requests>=2.0
-awscli   # if you invoke AWS CLI in tests
+# Core test framework
+pytest>=7.0               # unit & integration test runner 0
+
+# HTTP client for live endpoint tests
+requests>=2.0             # simple API calls 1
+
+# AWS CLI (for any AWS-based integration or self-stop tests)
+awscli>=1.29              # via pip, installs v1.x; ok for CI scripts 2
+
+# LLM serving library
+vllm>=0.8.5               # required by test_deploy_script.py 3
