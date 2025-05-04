@@ -2,7 +2,7 @@ name: DeepSeek Orchestrator • CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -17,7 +17,9 @@ jobs:
       TF_IN_AUTOMATION: "1"
 
     steps:
-      # --- checkout & tooling -------------------------------------------------
+      # ------------------------------------------------------------
+      # Checkout & toolchain
+      # ------------------------------------------------------------
       - uses: actions/checkout@v4
 
       - name: Setup Python
@@ -40,40 +42,52 @@ jobs:
       - name: Init result dirs
         run: mkdir -p pytest-results/unit pytest-results/plan
 
-      # --- unit tests ---------------------------------------------------------
+      # ------------------------------------------------------------
+      # Unit tests
+      # ------------------------------------------------------------
       - name: Run unit tests
         run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
 
-      # --- static terraform validate (no AWS) ---------------------------------
+      # ------------------------------------------------------------
+      # Terraform validate (no AWS)
+      # ------------------------------------------------------------
       - name: Terraform validate
         run: |
+          set -e
           cd terraform
           terraform init -input=false -no-color
           terraform validate -no-color
 
-      # --- AWS creds (optional) ----------------------------------------------
+      # ------------------------------------------------------------
+      # AWS creds (optional).  **Indentation fixed here**
+      # ------------------------------------------------------------
       - name: Configure AWS credentials
-        id: aws_creds
         if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.AWS_REGION != '' }}
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+        id: aws_creds
 
       - name: Notice when AWS secrets missing
         if: ${{ secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '' || secrets.AWS_REGION == '' }}
         run: echo "::warning ::AWS secrets not set – skipping terraform plan."
 
-      # --- terraform plan (runs only when creds configured) -------------------
+      # ------------------------------------------------------------
+      # Terraform plan (runs only when creds configured)
+      # ------------------------------------------------------------
       - name: Terraform plan
         if: steps.aws_creds.outcome == 'success'
         run: |
+          set -e
           cd terraform
           terraform init  -input=false -no-color
           terraform plan  -input=false -lock=false -no-color | tee ../pytest-results/plan/plan.txt
 
-      # --- upload artifacts ---------------------------------------------------
+      # ------------------------------------------------------------
+      # Upload artifacts
+      # ------------------------------------------------------------
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
