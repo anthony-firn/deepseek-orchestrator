@@ -18,6 +18,9 @@ jobs:
       TF_IN_AUTOMATION: "1"
 
     steps:
+      # ------------------------------------------------------------
+      # Checkout & Setup
+      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -40,18 +43,52 @@ jobs:
       - name: Initialize test output folders
         run: mkdir -p pytest-results/unit pytest-results/plan pytest-results/inference
 
+      # ------------------------------------------------------------
+      # Unit tests
+      # ------------------------------------------------------------
       - name: Run unit tests
         run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
         env:
           PYTHONWARNINGS: "ignore::UserWarning"
 
-      - name: Run terraform plan test
-        run: pytest tests/integration/test_terraform_plan.py --junitxml=pytest-results/plan/results.xml
+      # ------------------------------------------------------------
+      # AWS Credentials (optional)
+      # ------------------------------------------------------------
+      - name: Configure AWS credentials
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION }}
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+          # role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsRole
 
+      - name: Warn if AWS credentials missing
+        if: ${{ !secrets.AWS_ACCESS_KEY_ID || !secrets.AWS_SECRET_ACCESS_KEY || !secrets.AWS_REGION }}
+        run: |
+          echo "::warning ::AWS credentials not found—skipping Terraform plan test."
+
+      # ------------------------------------------------------------
+      # Terraform plan test (requires AWS creds)
+      # ------------------------------------------------------------
+      - name: Run terraform plan test
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_REGION }}
+        run: |
+          cd terraform
+          terraform init -input=false -no-color
+          terraform plan -input=false -lock=false -no-color
+        working-directory: terraform
+
+      # ------------------------------------------------------------
+      # Live inference integration (optional)
+      # ------------------------------------------------------------
       - name: Run live inference integration
-        if: env.VLLM_ENDPOINT_URL != ''
+        if: ${{ env.VLLM_ENDPOINT_URL != '' }}
         run: pytest tests/integration/test_inference_endpoint.py --junitxml=pytest-results/inference/results.xml
 
+      # ------------------------------------------------------------
+      # Publish results
+      # ------------------------------------------------------------
       - name: Publish test results
         if: always()
         uses: actions/upload-artifact@v4
