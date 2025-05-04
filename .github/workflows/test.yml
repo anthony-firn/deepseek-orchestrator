@@ -12,79 +12,99 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     env:
       PYTHON_VERSION: "3.10"
       TF_IN_AUTOMATION: "1"
-      # Single secret blob containing all required tfvars:
       CI_TFVARS: ${{ secrets.CI_TFVARS }}
-      # Optional live-inference URL
       VLLM_ENDPOINT_URL: ${{ secrets.VLLM_ENDPOINT_URL }}
 
     steps:
       - uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────────────
+      # 1) Cache Python dependencies
+      # ─────────────────────────────────────────────────────
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+          cache: 'pip'   # built-in pip caching 3
 
-      - name: Install dependencies
+      - name: Install Python deps
         run: |
-          set -e
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest requests
+        # pip install will be much faster thanks to the cache 4
+
+      # ─────────────────────────────────────────────────────
+      # 2) Cache Terraform plugins & modules
+      # ─────────────────────────────────────────────────────
+      - name: Cache Terraform plugins
+        uses: actions/cache@v3
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-plugins-${{ hashFiles('**/*.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-plugins-
+      - name: Cache Terraform modules
+        uses: actions/cache@v3
+        with:
+          path: terraform/.terraform
+          key: ${{ runner.os }}-terraform-modules-${{ hashFiles('terraform/**/*.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-modules-
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
+      # ─────────────────────────────────────────────────────
+      # 3) Run tests & Terraform
+      # ─────────────────────────────────────────────────────
       - name: Init result dirs
         run: mkdir -p pytest-results/unit pytest-results/plan pytest-results/inference
 
-      # Unit tests always run
       - name: Run unit tests
         run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
 
-      # Static HCL validation
       - name: Terraform validate
         run: |
           cd terraform
           terraform init -input=false -no-color
           terraform validate -no-color
 
-      # Write ci.tfvars if the secret is present
-      - name: Write Terraform vars file
+      - name: Write Terraform vars
         if: ${{ env.CI_TFVARS != '' }}
-        run: |
-          echo "${CI_TFVARS}" > terraform/ci.tfvars      # turn0search1
-          ls -al terraform/ci.tfvars
+        run: echo "${CI_TFVARS}" > terraform/ci.tfvars
 
-      - name: Warn if CI_TFVARS missing
+      - name: Warn if no tfvars
         if: ${{ env.CI_TFVARS == '' }}
-        run: echo "::warning ::CI_TFVARS secret not set – skipping terraform plan."
+        run: echo "::warning ::CI_TFVARS missing – skipping terraform plan."
 
-      # Terraform plan only when we have ci.tfvars
       - name: Terraform plan
         if: ${{ env.CI_TFVARS != '' }}
         run: |
           cd terraform
           terraform init -input=false -no-color
-          terraform plan -var-file=ci.tfvars -input=false -lock=false -no-color | tee ../pytest-results/plan/plan.txt   # turn0search8
+          terraform plan -var-file=ci.tfvars -input=false -lock=false -no-color \
+            | tee ../pytest-results/plan/plan.txt
 
-      # Optional live-inference test
       - name: Run live inference test
         if: ${{ env.VLLM_ENDPOINT_URL != '' }}
-        run: pytest tests/integration/test_inference_endpoint.py --junitxml=pytest-results/inference/results.xml
+        run: pytest tests/integration/test_inference_endpoint.py \
+             --junitxml=pytest-results/inference/results.xml
 
-      - name: Notice when no inference URL
+      - name: Notice no inference URL
         if: ${{ env.VLLM_ENDPOINT_URL == '' }}
         run: echo "::notice ::VLLM_ENDPOINT_URL not set – skipping live inference."
 
-      # Upload artifacts
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
