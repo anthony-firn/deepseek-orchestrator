@@ -2,7 +2,7 @@ name: DeepSeek Orchestrator • CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -21,72 +21,82 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ─────────────────────────────────────────────────────
-      # 1) Cache Python dependencies
-      # ─────────────────────────────────────────────────────
+      # ───────────────────────────
+      # Python / pip cache + install
+      # ───────────────────────────
       - name: Cache pip
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'   # built-in pip caching 3
-
+          cache: "pip"
       - name: Install Python deps
         run: |
           pip install -r requirements.txt
-        # pip install will be much faster thanks to the cache 4
+          pip install pytest requests
 
-      # ─────────────────────────────────────────────────────
-      # 2) Cache Terraform plugins & modules
-      # ─────────────────────────────────────────────────────
+      # ───────────────────────────
+      # Terraform cache + install
+      # ───────────────────────────
       - name: Cache Terraform plugins
         uses: actions/cache@v3
         with:
           path: ~/.terraform.d/plugin-cache
-          key: ${{ runner.os }}-terraform-plugins-${{ hashFiles('**/*.tf') }}
-          restore-keys: |
-            ${{ runner.os }}-terraform-plugins-
+          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('terraform/**/*.tf') }}
       - name: Cache Terraform modules
         uses: actions/cache@v3
         with:
           path: terraform/.terraform
-          key: ${{ runner.os }}-terraform-modules-${{ hashFiles('terraform/**/*.tf') }}
-          restore-keys: |
-            ${{ runner.os }}-terraform-modules-
-
+          key: ${{ runner.os }}-tf-mods-${{ hashFiles('terraform/**/*.tf') }}
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ─────────────────────────────────────────────────────
-      # 3) Run tests & Terraform
-      # ─────────────────────────────────────────────────────
+      # ───────────────────────────
+      # Prepare result dirs
+      # ───────────────────────────
       - name: Init result dirs
         run: mkdir -p pytest-results/unit pytest-results/plan pytest-results/inference
 
+      # ───────────────────────────
+      # Unit tests
+      # ───────────────────────────
       - name: Run unit tests
         run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
 
-      - name: Terraform validate
+      # ───────────────────────────
+      # HCL fmt-check (syntax only)
+      # ───────────────────────────
+      - name: Terraform fmt check
         run: |
           cd terraform
-          terraform init -input=false -no-color
-          terraform validate -no-color
+          terraform fmt -check
 
-      - name: Write Terraform vars
+      # ───────────────────────────
+      # Generate ci.tfvars
+      # ───────────────────────────
+      - name: Write terraform vars
         if: ${{ env.CI_TFVARS != '' }}
         run: echo "${CI_TFVARS}" > terraform/ci.tfvars
 
-      - name: Warn if no tfvars
+      - name: Warn missing tfvars
         if: ${{ env.CI_TFVARS == '' }}
-        run: echo "::warning ::CI_TFVARS missing – skipping terraform plan."
+        run: echo "::warning ::CI_TFVARS not set – skipping terraform validate & plan."
+
+      # ───────────────────────────
+      # Terraform validate & plan (only if tfvars exist)
+      # ───────────────────────────
+      - name: Terraform validate
+        if: ${{ env.CI_TFVARS != '' }}
+        run: |
+          cd terraform
+          terraform init -input=false -no-color
+          terraform validate -var-file=ci.tfvars -no-color
 
       - name: Terraform plan
         if: ${{ env.CI_TFVARS != '' }}
@@ -96,15 +106,20 @@ jobs:
           terraform plan -var-file=ci.tfvars -input=false -lock=false -no-color \
             | tee ../pytest-results/plan/plan.txt
 
+      # ───────────────────────────
+      # Live inference (optional)
+      # ───────────────────────────
       - name: Run live inference test
         if: ${{ env.VLLM_ENDPOINT_URL != '' }}
-        run: pytest tests/integration/test_inference_endpoint.py \
-             --junitxml=pytest-results/inference/results.xml
+        run: pytest tests/integration/test_inference_endpoint.py --junitxml=pytest-results/inference/results.xml
 
       - name: Notice no inference URL
         if: ${{ env.VLLM_ENDPOINT_URL == '' }}
         run: echo "::notice ::VLLM_ENDPOINT_URL not set – skipping live inference."
 
+      # ───────────────────────────
+      # Upload artifacts
+      # ───────────────────────────
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
