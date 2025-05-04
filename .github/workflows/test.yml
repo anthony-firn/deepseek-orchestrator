@@ -2,7 +2,7 @@ name: DeepSeek Orchestrator • CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -12,85 +12,86 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     env:
       PYTHON_VERSION: "3.10"
-      TF_IN_AUTOMATION: "1"
+      TF_IN_AUTOMATION: "1"          # silence terraform prompts
+      VLLM_ENDPOINT_URL: ${{ env.VLLM_ENDPOINT_URL }}   # optional
 
     steps:
-      # ------------------------------------------------------------
-      # Checkout & toolchain
-      # ------------------------------------------------------------
-      - uses: actions/checkout@v4
+    # --------------------------------------------------  tooling
+    - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: pip
 
-      - name: Install Python deps
-        run: |
-          set -e
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install deps
+      run: |
+        set -e
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest requests
 
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.6
 
-      - name: Init result dirs
-        run: mkdir -p pytest-results/unit pytest-results/plan
+    - run: mkdir -p pytest-results/unit pytest-results/plan pytest-results/inference
+      name: Init result dirs
 
-      # ------------------------------------------------------------
-      # Unit tests
-      # ------------------------------------------------------------
-      - name: Run unit tests
-        run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
+    # --------------------------------------------------  unit tests
+    - name: Run unit tests
+      run: pytest tests/unit --junitxml=pytest-results/unit/results.xml
 
-      # ------------------------------------------------------------
-      # Terraform validate (no AWS)
-      # ------------------------------------------------------------
-      - name: Terraform validate
-        run: |
-          set -e
-          cd terraform
-          terraform init -input=false -no-color
-          terraform validate -no-color
+    # --------------------------------------------------  validate (static)
+    - name: Terraform validate
+      run: |
+        set -e
+        cd terraform
+        terraform init -input=false -no-color
+        terraform validate -no-color
 
-      # ------------------------------------------------------------
-      # AWS creds (optional).  **Indentation fixed here**
-      # ------------------------------------------------------------
-      - name: Configure AWS credentials
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.AWS_REGION != '' }}
-        uses: aws-actions/configure-aws-credentials@v3
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
-        id: aws_creds
+    # --------------------------------------------------  optional AWS creds
+    - name: Configure AWS credentials
+      id: aws_creds
+      if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.AWS_REGION != '' }}
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Notice when AWS secrets missing
-        if: ${{ secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '' || secrets.AWS_REGION == '' }}
-        run: echo "::warning ::AWS secrets not set – skipping terraform plan."
+    - name: Warn if AWS secrets missing
+      if: steps.aws_creds.outcome != 'success'
+      run: echo "::warning ::AWS secrets not set – skipping terraform plan."
 
-      # ------------------------------------------------------------
-      # Terraform plan (runs only when creds configured)
-      # ------------------------------------------------------------
-      - name: Terraform plan
-        if: steps.aws_creds.outcome == 'success'
-        run: |
-          set -e
-          cd terraform
-          terraform init  -input=false -no-color
-          terraform plan  -input=false -lock=false -no-color | tee ../pytest-results/plan/plan.txt
+    # --------------------------------------------------  terraform plan
+    - name: Terraform plan
+      if: steps.aws_creds.outcome == 'success'
+      run: |
+        set -e
+        cd terraform
+        terraform init -input=false -no-color
+        terraform plan -input=false -lock=false -no-color | tee ../pytest-results/plan/plan.txt
 
-      # ------------------------------------------------------------
-      # Upload artifacts
-      # ------------------------------------------------------------
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-results
-          path: pytest-results/**
+    # --------------------------------------------------  live inference
+    - name: Run live inference test
+      if: ${{ env.VLLM_ENDPOINT_URL != '' }}
+      run: pytest tests/integration/test_inference_endpoint.py \
+              --junitxml=pytest-results/inference/results.xml
+
+    - name: Warn when no inference URL
+      if: ${{ env.VLLM_ENDPOINT_URL == '' }}
+      run: echo "::notice ::VLLM_ENDPOINT_URL not set – skipping live inference."
+
+    # --------------------------------------------------  upload artifacts
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-results
+        path: pytest-results/**
