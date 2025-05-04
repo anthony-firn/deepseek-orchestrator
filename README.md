@@ -1,170 +1,106 @@
+[![CI Status](https://github.com/anthony-firn/deepseek-orchestrator/actions/workflows/test.yml/badge.svg)](https://github.com/anthony-firn/deepseek-orchestrator/actions/workflows/test.yml)
+
 # DeepSeek Orchestrator
 
-**DeepSeek Orchestrator** is an open-source, fully automated framework for fine-tuning, distilling, and serving DeepSeek R1 671B and its distilled variants on-demand in the cloud. It leverages Terraform for infrastructure provisioning, vLLM for efficient model serving, and integrates cost-optimization strategies to ensure resources are utilized only when needed.
+**DeepSeek Orchestrator** is an open-source, fully automated framework for fine-tuning, distilling, and serving DeepSeek R1 671B and its distilled variants on-demand in the cloud. It leverages Terraform for infrastructure provisioning, vLLM for efficient model serving, and integrates cost-optimization (hibernation, spot instances) and caching strategies to minimize runtime and cost.
 
 ## 🚀 Features
 
-* **Full Parameter Fine-Tuning**: Utilize the [ScienceOne-AI/DeepSeek-671B-SFT-Guide](https://github.com/ScienceOne-AI/DeepSeek-671B-SFT-Guide) for comprehensive fine-tuning of DeepSeek R1 671B.
-
-* **Model Distillation**: Implement knowledge distillation techniques to create smaller, efficient models from the large-scale DeepSeek R1.
-
-* **On-Demand Serving**: Deploy models using vLLM for high-throughput, low-latency inference, with infrastructure that scales based on demand.
-
-* **Cost Optimization**: Incorporate AWS features like EC2 hibernation and spot instances to minimize costs during idle periods.
-
-* **Infrastructure as Code**: Use Terraform to provision and manage cloud resources, ensuring reproducibility and scalability.
+* **Full Parameter Fine-Tuning**: Uses the [ScienceOne-AI/DeepSeek-671B-SFT-Guide](https://github.com/ScienceOne-AI/DeepSeek-671B-SFT-Guide) for QLoRA/full-parameter tuning.  
+* **Model Distillation**: Creates smaller student models (7B, 70B) via KL-distillation scripts.  
+* **On-Demand Serving**: Deploys models with vLLM, auto-scaling behind the scenes.  
+* **Cost Optimization**: EC2 hibernation, spot instances, and resource monitoring.  
+* **Infrastructure as Code**: Terraform modules for networking, compute, storage; caching for Terraform providers and Python deps.
 
 ## 🗂️ Project Structure
 
-```
-deepseek-orchestrator/
-├── README.md
-├── LICENSE
-├── .gitignore
-├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── modules/
-│   │   ├── compute/
-│   │   ├── networking/
-│   │   └── storage/
-│   └── environments/
-│       ├── dev/
-│       ├── staging/
-│       └── prod/
-├── scripts/
-│   ├── setup_env.sh
-│   ├── train_model.sh
-│   ├── distill_model.sh
-│   ├── deploy_model.sh
-│   └── monitor_resources.sh
-├── models/
-│   ├── checkpoints/
-│   └── logs/
-├── data/
-│   ├── raw/
-│   └── processed/
-├── configs/
-│   ├── training_config.yaml
-│   ├── distillation_config.yaml
-│   └── deployment_config.yaml
-├── notebooks/
-│   └── exploration.ipynb
-├── tests/
-│   ├── unit/
-│   └── integration/
-└── docs/
-    ├── architecture.md
-    └── usage.md
-```
+deepseek-orchestrator/ ├── README.md ├── LICENSE ├── .gitignore ├── .github/ │   └── workflows/ │       └── test.yml          # CI/CD workflow (caches deps, runs tests & terraform) ├── terraform/ │   ├── main.tf │   ├── variables.tf │   ├── outputs.tf │   └── environments/ │       ├── dev/ │       ├── staging/ │       └── prod/ ├── scripts/ │   ├── setup_env.sh │   ├── train_model.sh │   ├── distill_model.sh │   ├── deploy_model.sh │   └── monitor_resources.sh ├── configs/ │   ├── training_config.yaml │   ├── distillation_config.yaml │   └── deployment_config.yaml ├── tests/ │   ├── unit/ │   └── integration/ └── docs/ ├── architecture.md └── usage.md
 
 ## 🛠️ Getting Started
 
 ### Prerequisites
 
-* **AWS Account**: Ensure you have an AWS account with permissions to create EC2 instances, VPCs, and other necessary resources.
+- **AWS Account** with IAM permissions for EC2, VPC, S3, etc.  
+- **Terraform** v1.4+ and **Python** 3.10+.  
+- **GitHub Actions** enabled on this repo.
 
-* **Terraform**: Install Terraform for infrastructure provisioning.
+### 1. Clone & Configure
 
-* **Python Environment**: Set up a Python environment with required dependencies listed in `requirements.txt`.
+```bash
+git clone https://github.com/anthony-firn/deepseek-orchestrator.git
+cd deepseek-orchestrator
 
-### Installation
+2. Secrets Setup
 
-1. **Clone the Repository**:
+CI: CI_TFVARS
 
-   ```bash
-   git clone https://github.com/yourusername/deepseek-orchestrator.git
-   cd deepseek-orchestrator
-   ```
+Create a single GitHub Actions secret named CI_TFVARS containing all required Terraform inputs:
 
-2. **Configure AWS Credentials**:
+key_pair_name = "your-ssh-key"
+aws_region    = "us-east-1"
+# … other required vars (e.g. subnet_cidr, vpc_cidr)
 
-   Ensure your AWS credentials are configured, either via environment variables or the AWS credentials file.
+This drives both terraform validate and terraform plan in CI without committing any sensitive data.
 
-3. **Provision Infrastructure**:
+(Optional) Live Inference: VLLM_ENDPOINT_URL
 
-   Navigate to the `terraform/environments/dev/` directory and initialize Terraform:
+If you have a running vLLM server and want to exercise live-inference tests, create VLLM_ENDPOINT_URL:
 
-   ```bash
-   terraform init
-   terraform apply
-   ```
+https://your-vllm-host:8000
 
-   This will set up the necessary infrastructure, including EC2 instances with GPU capabilities.
+3. Run CI Locally
 
-4. **Set Up the Environment**:
+GitHub Actions will:
 
-   SSH into the provisioned EC2 instance and run the setup script:
+1. Cache Python deps and Terraform plugins/modules
 
-   ```bash
-   ./scripts/setup_env.sh
-   ```
 
-5. **Fine-Tune the Model**:
+2. Run unit tests
 
-   Prepare your dataset and configuration files, then initiate fine-tuning:
 
-   ```bash
-   ./scripts/train_model.sh
-   ```
+3. Auto-format Terraform (terraform fmt)
 
-6. **Distill the Model** (Optional):
 
-   To create a smaller, efficient version of the model:
+4. Write terraform/ci.tfvars from CI_TFVARS
 
-   ```bash
-   ./scripts/distill_model.sh
-   ```
 
-7. **Deploy the Model**:
+5. Validate and Plan Terraform (skipped with warning if CI_TFVARS is unset)
 
-   Deploy the fine-tuned or distilled model using vLLM:
 
-   ```bash
-   ./scripts/deploy_model.sh
-   ```
+6. Optionally run live-inference tests
 
-## 📦 Model Management
 
-* **Checkpoints**: Stored in the `models/checkpoints/` directory.
 
-* **Logs**: Training and inference logs are saved in `models/logs/`.
+You can also mimic this locally by:
 
-* **Model Registry**: Integrate with tools like MLflow for versioning and tracking.
+export CI_TFVARS="$(cat ~/ci.tfvars)"
+export VLLM_ENDPOINT_URL="http://localhost:8000"
+github-actions-runner \
+  --job test
 
-## 📈 Monitoring and Optimization
+(or simply push to GitHub and watch the badge update)
 
-* **Resource Monitoring**: Utilize AWS CloudWatch to monitor resource utilization.
+4. Provision Dev Environment
 
-* **Cost Optimization**:
+cd terraform/environments/dev
+terraform init
+terraform apply -var-file=../../ci.tfvars
 
-  * **EC2 Hibernation**: Enable hibernation for EC2 instances to save costs during inactivity.
+5. Fine-Tune, Distill, Deploy
 
-  * **Spot Instances**: Configure Terraform to use spot instances where appropriate.
+./scripts/setup_env.sh
+./scripts/train_model.sh
+./scripts/distill_model.sh      # optional
+./scripts/deploy_model.sh
 
-* **Auto-Scaling**: Implement auto-scaling groups to adjust resources based on demand.
+📘 Documentation
 
-## 📄 Documentation
+See docs/architecture.md and docs/usage.md for detailed guides, examples, and troubleshooting.
 
-Detailed documentation is available in the `docs/` directory, including:
+🤝 Contributing
 
-* **Architecture Overview**: `architecture.md`
+Contributions welcome! Please open issues or PRs against this repo—refer to our CONTRIBUTING.md.
 
-* **Usage Guide**: `usage.md`
+📜 License
 
-* **Troubleshooting**: Common issues and solutions.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request for any enhancements or bug fixes.
-
-## 📜 License
-
-This project is licensed under the MIT License.
-
----
-
-By following this guide, you can effectively manage the lifecycle of large language models like DeepSeek R1 671B, ensuring efficient utilization of resources and scalability.
-
-If you need further assistance or have specific questions, feel free to ask!
+MIT License. See LICENSE for details.
